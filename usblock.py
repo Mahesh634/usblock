@@ -146,7 +146,7 @@ class UsbDevice:
             with open(f"{self.__path}/bConfigurationValue","r") as f:
                 value = f.read()
             value = to_int(value)
-            return self.cfg_value_to_index(value)
+            return self.__cfg_value_to_index(value)
         except:
             return -1
 
@@ -166,7 +166,7 @@ class UsbDevice:
         '''
         Allows to set a confguration by confguration value.
         '''
-        num = self.cfg_index_to_value(num-1)
+        num = self.__cfg_index_to_value(num-1)
         self.__dev.set_configuration(num)
 
     def get_configuration(self, num):
@@ -175,13 +175,13 @@ class UsbDevice:
         '''
         return self.__cfgs[num-1]
 
-    def cfg_value_to_index(self, num):
+    def __cfg_value_to_index(self, num):
         '''
         Maps from configuration value the actual configuration list index.
         '''
         return self.__cfgs_map[num] + 1
 
-    def cfg_index_to_value(self, num):
+    def __cfg_index_to_value(self, num):
         '''
         Maps from the configuration list index to the configuration value.
         '''
