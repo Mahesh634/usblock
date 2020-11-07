@@ -189,8 +189,8 @@ class UsbDevice:
 
 class UsbLock:
     ERR_SUCCESS = 0
-    ERR_USB_UNPLUGGED = 1
-    ERR_CFG_DISAPPEARED = 2
+    ERR_USB_DEV_REMOVED = 1
+    ERR_USB_CFG_DISAPPEARED = 2
 
     def enable(self):
         '''
@@ -242,7 +242,7 @@ class UsbLock:
 
     def __handle_device(self):
         '''
-        Main function for handling of a plugged in USB devices by iterating over all configurations and interfaces.
+        Main function for handling of plugged-in USB devices.
         '''
         print(self.__dev.get_device_summary())
 
@@ -264,6 +264,9 @@ class UsbLock:
         self.__handle_configuration(choice)
 
     def __handle_configuration(self, choice):
+        '''
+        Takes a configuration and processes it.
+        '''
         # Get sysfs path of USB device for later processing
         path = self.__dev.get_sysfs_path()
 
@@ -299,35 +302,38 @@ class UsbLock:
                 print_info("Keeping interface locked...\n")
                 continue
 
+            # If one of the unlock calls above fails, we will end up here. This could happen if the USB disappeared for some reason
+            # (e.g. unplugged) or the selected configuration suddenly disappeared from sysfs. This seems to happen, if the kernel has 
+            # no appropriate driver for the selected configuration and interface. The kernel then falls back to the first (?) configuration.
             result = self.__handle_configuration_error(retval, choice)
-            if result:
+            if result >= 0:
                 self.__handle_configuration(result)
             return
 
     def __handle_configuration_error(self, retval, choice):
+        '''
+        Takes the requested USB configuration as well as the return value of the __unlock_single_interface()
+        function and processes it.
+        '''
+        if retval == self.ERR_USB_DEV_REMOVED:
+            print(red("It seems that the device disappeared. Was it removed? Skipping device."))
+            return -1
 
-        if retval == self.ERR_USB_UNPLUGGED:
-                print(red("It seems that the device disappeared. Was it removed? Skipping device."))
-                return False
-
-        if retval == self.ERR_CFG_DISAPPEARED:
-            # If one of the unlock calls above fails, we will end up here. This could happen if the USB disappeared for some reason
-            # (e.g. unplugged) or the selected configuration suddenly disappeared from sysfs. This seems to hapen, if the kernel has 
-            # no appropriate driver for the selected configuration and interface. The kernel then falls back to the first (?) configuration.
+        if retval == self.ERR_USB_CFG_DISAPPEARED:
             result = self.__dev.get_active_configuration()
 
             if result > 0:
                 print(f"{red('Unlock failed, the kernel switched automatically from configuration')} {yellow(choice)} {red('to')} {yellow(result)}{red('!')}\n"\
                         f"{red('So configuration')} {yellow(choice)} {red('is no longer available and will be skipped.')}")
                 print(f"Continue with configuration {yellow(result)}? [y/n]")
-            line = sys.stdin.readline().rstrip()
 
-            while True:
-                if line == "y":
-                    return result
-                if line == "n":
-                    print_info("\nIgnoring interface...")
-                    return 0
+                while True:
+                    line = sys.stdin.readline().rstrip()
+                    if line == "y":
+                        return result
+                    if line == "n":
+                        print_info("\nIgnoring interface...")
+                        return -1
 
     def __unlock_single_interface(self, path, probe_driver):
         '''
@@ -342,14 +348,14 @@ class UsbLock:
             with open(path, 'w') as f:
                 f.write("1")
         except FileNotFoundError:
-            return self.ERR_USB_UNPLUGGED
+            return self.ERR_USB_DEV_REMOVED
 
         if probe_driver:
             with open('/sys/bus/usb/drivers_probe', 'w') as f:
                 f.write(interface)
 
         if not self.__sysfs_path_exists(path):
-            return self.ERR_CFG_DISAPPEARED
+            return self.ERR_USB_CFG_DISAPPEARED
 
         return self.ERR_SUCCESS
 
@@ -360,7 +366,7 @@ class UsbLock:
         # FIXME: Currently the sleep is needed as a hacky workaround for a race condition.
         # If we probe the driver, it can happen that the kernel does not have the correct driver.
         # In this case, the configuration will be removed from sysfs - the sysfs path just disappears.
-        # Therefore, we need to wait a bit an check, if the sysfs path is still there.
+        # Therefore, we need to wait a bit and check, if the sysfs path is still there.
         # A much better solution (aka correct solution) would be, to somehow test whether the driver probe
         # failed or not.
         time.sleep(0.5)
@@ -369,7 +375,8 @@ class UsbLock:
         return False
 
 def main():
-    # Some monkey patching
+    # Some monkey patching: We need these functions to extend the Interface class at runtime
+    # for simplicity reasons.
     usb.core.Interface.get_interface_string = get_interface_string
     usb.core.Interface.get_interface_class_string = get_interface_class_string
 
@@ -385,7 +392,7 @@ def main():
         lock.enable()
     except KeyboardInterrupt:
         while True:
-            print_info("Do you want to unlock USB? [yes,no]")
+            print_info("Do you want to unlock USB? [yes/no]")
             line = sys.stdin.readline().rstrip()
             if line == "yes":
                 lock.disable()
